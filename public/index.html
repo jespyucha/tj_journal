@@ -419,10 +419,6 @@ textarea.jf-input{resize:vertical;min-height:64px;line-height:1.4}
           <label class="flbl">Net P&amp;L ($)</label>
           <input type="number" class="fi" id="cal-pnl" placeholder="+0.00" step="0.01">
         </div>
-        <div class="fg">
-          <label class="flbl">Fees ($)</label>
-          <input type="number" class="fi" id="cal-fee" placeholder="0.00" step="0.01">
-        </div>
       </div>
       <div class="form-grid">
         <div class="fg">
@@ -774,7 +770,6 @@ textarea.jf-input{resize:vertical;min-height:64px;line-height:1.4}
       <div class="fg"><label class="flbl">Entry Price</label><input type="number" class="fi" id="edit-entry-price" step="0.00001"></div>
       <div class="fg"><label class="flbl">Exit Price</label><input type="number" class="fi" id="edit-exit-price" step="0.00001"></div>
       <div class="fg"><label class="flbl">Net P&amp;L ($)</label><input type="number" class="fi" id="edit-pnl" step="0.01"></div>
-      <div class="fg"><label class="flbl">Fees ($)</label><input type="number" class="fi" id="edit-fee" step="0.01"></div>
     </div>
     <div class="form-grid">
       <div class="fg">
@@ -1328,7 +1323,7 @@ function ensureTradeId(trade) {
   if (trade.id) return trade.id;
   const key = [
     trade.date, trade.asset, trade.entryTime, trade.exitTime,
-    trade.entryPrice, trade.exitPrice, trade.pnl, trade.fee,
+    trade.entryPrice, trade.exitPrice, trade.pnl,
     trade.direction, trade.model
   ].join('|');
   let hash = 0;
@@ -1536,10 +1531,10 @@ function rCal() {
           const e=document.createElement('div'); e.className='dc empty-day'; g.appendChild(e);
         }
       }
-      let wkPnl=0, wkFees=0, wkCount=0;
+      let wkPnl=0, wkCount=0;
       weekDays.forEach(wd=>{
         const key=ds(currentYear,currentMonth,wd);
-        (pnlTrades[key]||[]).forEach(t=>{wkPnl+=t.pnl||0; wkFees+=t.fee||0; wkCount++;});
+        (pnlTrades[key]||[]).forEach(t=>{wkPnl+=t.pnl||0; wkCount++;});
       });
       const wp=document.createElement('div'); wp.className='week-cell';
       if(wkCount>0){
@@ -1547,7 +1542,7 @@ function rCal() {
         wp.innerHTML=
           `<div class="week-cell-label">Wk ${getWeekNumber(currentYear,currentMonth,weekDays[0])}</div>`+
           `<div class="week-pnl" style="color:${wc}">${wkPnl>=0?'+':''}${fmtCurrency(wkPnl)}</div>`+
-          `<div class="week-meta">${wkCount} trades<br>-${fmtCurrency(wkFees)} fees</div>`;
+          `<div class="week-meta">${wkCount} trades</div>`;
       } else {
         wp.innerHTML=`<div class="week-empty">—</div>`;
       }
@@ -1575,13 +1570,13 @@ function renderCalStats() {
   const wins=all.filter(t=>t.result==='W').length;
   const total=all.length;
   const wr=total?((wins/total)*100):0;
-  const fees=all.reduce((s,t)=>s+(t.fee||0),0);
+  
 
   document.getElementById('cal-stats').innerHTML=`
     <div class="sc"><div class="sl">Total Net P&L</div><div class="sv" style="color:${netPnl>=0?'var(--green)':'var(--red)'}">${netPnl>=0?'+':''}${fmtCurrency(netPnl)}</div></div>
     <div class="sc"><div class="sl">Win Rate</div><div class="sv">${wr.toFixed(1)}%</div><div class="sv-sub">${wins}W / ${total-wins}L / ${all.filter(t=>t.result==='BE').length}BE</div></div>
     <div class="sc"><div class="sl">Total Trades</div><div class="sv">${total}</div><div class="sv-sub">${Object.keys(pnlTrades).length} days</div></div>
-    <div class="sc"><div class="sl">Total Fees</div><div class="sv" style="color:var(--red)">-${fmtCurrency(fees)}</div><div class="sv-sub">avg ${total?fmtCurrency(fees/total):'$0'}/trade</div></div>`;
+    </div>`;
 
   const monthPnl = getMonthPnl(currentYear,currentMonth);
   const pct = Math.min(100,Math.max(0,(monthPnl/MONTHLY_TARGET)*100));
@@ -1711,7 +1706,7 @@ function openEditModal(date, id) {
   document.getElementById('edit-entry-price').value = trade.entryPrice||'';
   document.getElementById('edit-exit-price').value  = trade.exitPrice||'';
   document.getElementById('edit-pnl').value         = trade.pnl||'';
-  document.getElementById('edit-fee').value         = trade.fee||'';
+  
 
   ['edit-dir','edit-result','edit-model'].forEach(g=>document.querySelectorAll(`[data-group="${g}"]`).forEach(b=>b.classList.remove('active')));
   if(trade.direction){ const b=document.querySelector(`[data-group="edit-dir"][data-val="${trade.direction}"]`); if(b) b.classList.add('active'); }
@@ -1729,7 +1724,6 @@ function saveEditedTrade() {
   const newDate  = document.getElementById('edit-date').value;
   const asset    = document.getElementById('edit-asset').value.trim().toUpperCase();
   const pnl      = parseFloat(document.getElementById('edit-pnl').value);
-  const fee      = parseFloat(document.getElementById('edit-fee').value)||0;
   const result   = getPillVal('edit-result');
   const direction= getPillVal('edit-dir')||'Long';
   const model    = getPillVal('edit-model')||'Other';
@@ -1745,7 +1739,7 @@ function saveEditedTrade() {
     exitTime:   document.getElementById('edit-exit-time').value,
     entryPrice: parseFloat(document.getElementById('edit-entry-price').value)||0,
     exitPrice:  parseFloat(document.getElementById('edit-exit-price').value)||0,
-    pnl, fee, result, direction, model
+    pnl, result, direction, model
   };
 
   pnlTrades[newDate].push(updatedTrade);
@@ -1817,7 +1811,6 @@ async function addTrade() {
   const entryPrice = parseFloat(document.getElementById('cal-entry-price').value)||0;
   const exitPrice  = parseFloat(document.getElementById('cal-exit-price').value)||0;
   const pnl        = parseFloat(document.getElementById('cal-pnl').value);
-  const fee        = parseFloat(document.getElementById('cal-fee').value)||0;
   const result     = getPillVal('result');
   const direction  = getPillVal('dir')||'Long';
   const model      = getPillVal('model')||'Other';
@@ -1830,7 +1823,7 @@ async function addTrade() {
   const id = Date.now() + Math.floor(Math.random()*1000);
   const newTrade = {
     id, date, asset, entryTime, exitTime, entryPrice, exitPrice,
-    pnl, fee, result, direction, model, source: 'manual'
+    pnl, result, direction, model, source: 'manual'
   };
 
   if(!pnlTrades[date]) pnlTrades[date]=[];
@@ -1866,7 +1859,7 @@ async function addTrade() {
 }
 // THE MISSING FUNCTION! Keep this right below addTrade
 function clearTradeForm(){
-  ['cal-date','cal-asset','cal-entry-time','cal-exit-time','cal-entry-price','cal-exit-price','cal-pnl','cal-fee'].forEach(id=>{
+  ['cal-date','cal-asset','cal-entry-time','cal-exit-time','cal-entry-price','cal-exit-price','cal-pnl'].forEach(id=>{
     const el=document.getElementById(id);
     if(id==='cal-date') el.valueAsDate=new Date(); else el.value='';
   });
@@ -2434,10 +2427,10 @@ function analyzeTradeFruit() {
   const sessions = {};
   all.forEach(t => {
     const s = detectSession(t.entryTime);
-    if (!sessions[s]) sessions[s] = {wins:0,total:0,pnl:0,fees:0};
+    if (!sessions[s]) sessions[s] = {wins:0,total:0,pnl:0};
     sessions[s].total++;
     sessions[s].pnl += t.pnl;
-    sessions[s].fees += (t.fee||0);
+    
     if (t.result==='W') sessions[s].wins++;
   });
   const maxSPnl = Math.max(...Object.values(sessions).map(s=>Math.abs(s.pnl)),1);
@@ -2457,7 +2450,7 @@ function analyzeTradeFruit() {
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
         ${pill('WR', pct(swr), swr>=50?'var(--green)':'var(--red)')}
         ${pill('Trades', d.total)}
-        ${pill('Fees', '-$'+Math.abs(d.fees).toFixed(2), 'var(--red)')}
+        
       </div>
       ${bar(d.pnl, maxSPnl, d.pnl>=0?'#1D9E75':'#D85A30')}
     </div>`;
@@ -2530,10 +2523,10 @@ function analyzeTradeFruit() {
   const assets = {};
   all.forEach(t => {
     const base = t.asset.replace(/[A-Z]\d$/,'');
-    if (!assets[base]) assets[base] = {wins:0,total:0,pnl:0,fees:0};
+    if (!assets[base]) assets[base] = {wins:0,total:0,pnl:0};
     assets[base].total++;
     assets[base].pnl += t.pnl;
-    assets[base].fees += (t.fee||0);
+    
     if (t.result==='W') assets[base].wins++;
   });
   const maxAP = Math.max(...Object.values(assets).map(a=>Math.abs(a.pnl)),1);
@@ -2547,7 +2540,7 @@ function analyzeTradeFruit() {
         <span>${pill('WR',pct(awr),awr>=50?'var(--green)':'var(--red)')} &nbsp;
         <span style="color:${c};font-weight:600">${fmt(d.pnl)}</span></span>
       </div>
-      <div style="font-size:10px;color:var(--hint);margin-top:2px">${d.total} trades · fees: -$${Math.abs(d.fees).toFixed(2)}</div>
+      <div style="font-size:10px;color:var(--hint);margin-top:2px">${d.total} trades �</div>
       ${bar(d.pnl, maxAP, d.pnl>=0?'#1D9E75':'#D85A30')}
     </div>`;
   });
@@ -2908,8 +2901,7 @@ function parseCSVAndImport(csvText) {
     if (isNaN(sFillNum)) sFillNum = null;
 
     const pnlVal = parseMoney(getVal(row, 'pnl', 'profit', 'profitloss', 'netpnl'));
-    const feeVal = parseMoney(getVal(row, 'commission', 'fee', 'fees'));
-
+  
     const soldTs = getVal(row, 'soldtimestamp', 'selltimestamp', 'exittimestamp', 'soldtime', 'exittime');
     const boughtTs = getVal(row, 'boughttimestamp', 'buytimestamp', 'entrytimestamp', 'boughttime', 'entrytime');
     if (!soldTs || !boughtTs) { skipped++; continue; }
@@ -2968,7 +2960,7 @@ function parseCSVAndImport(csvText) {
       asset: symbol,
       entryTime, exitTime, entryPrice, exitPrice,
       qty: parseInt(getVal(row, 'qty', 'quantity') || '1'),
-      pnl: pnlVal, netPnl: pnlVal - feeVal, fee: feeVal,
+      pnl: pnlVal, netPnl: pnlVal,
       result, direction: isLong ? 'Long' : 'Short', model: 'Other',
       buyFillId: bFillNum || null, sellFillId: sFillNum || null,
       source: 'csv'

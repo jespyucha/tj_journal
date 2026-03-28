@@ -2852,12 +2852,6 @@ function parseCSVAndImport(csvText) {
   const delimiter = detectDelimiter(headerLine);
   const headers = parseCSVLine(headerLine, delimiter).map(h => normalizeHeader(h));
 
-  // Collect all existing fillId pairs for dedup
-  const existingFills = new Set();
-  Object.values(pnlTrades).flat().forEach(t => {
-    if (t.buyFillId && t.sellFillId) existingFills.add(t.buyFillId + '_' + t.sellFillId);
-  });
-
   const getVal = (row, ...keys) => {
     for (const k of keys) {
       if (row[k] !== undefined && row[k] !== '') return row[k];
@@ -2875,6 +2869,29 @@ function parseCSVAndImport(csvText) {
     return isNaN(n) ? 0 : n;
   };
 
+  const buildKey = (info) => {
+    const b = info.bFill || '';
+    const s = info.sFill || '';
+    const sym = info.symbol || '';
+    const et = info.entryTime || '';
+    const xt = info.exitTime || '';
+    return `${b}_${s}_${sym}_${et}_${xt}`;
+  };
+
+  // Collect existing trades for dedup using a richer key
+  const existingFills = new Set();
+  Object.values(pnlTrades).flat().forEach(t => {
+    if (t && (t.buyFillId || t.sellFillId || t.asset)) {
+      existingFills.add(buildKey({
+        bFill: t.buyFillId || '',
+        sFill: t.sellFillId || '',
+        symbol: t.asset || '',
+        entryTime: t.entryTime || '',
+        exitTime: t.exitTime || ''
+      }));
+    }
+  });
+
   let added = 0, skipped = 0;
   const tradesToSave = [];
   for (let i = 1; i < lines.length; i++) {
@@ -2883,15 +2900,12 @@ function parseCSVAndImport(csvText) {
     const row = {};
     headers.forEach((h, idx) => { if (h) row[h] = cols[idx] || ''; });
 
-    const bFill = parseInt(getVal(row, 'buyfillid', 'buyfill', 'buyid') || '0');
-    const sFill = parseInt(getVal(row, 'sellfillid', 'sellfill', 'sellid') || '0');
-
-    // Dedup only when fill ids exist
-    if (bFill && sFill) {
-      const fillKey = bFill + '_' + sFill;
-      if (existingFills.has(fillKey)) { skipped++; continue; }
-      existingFills.add(fillKey);
-    }
+    const bFillRaw = (getVal(row, 'buyfillid', 'buyfill', 'buyid') || '').trim();
+    const sFillRaw = (getVal(row, 'sellfillid', 'sellfill', 'sellid') || '').trim();
+    let bFillNum = bFillRaw ? Number(bFillRaw) : null;
+    let sFillNum = sFillRaw ? Number(sFillRaw) : null;
+    if (isNaN(bFillNum)) bFillNum = null;
+    if (isNaN(sFillNum)) sFillNum = null;
 
     const pnlVal = parseMoney(getVal(row, 'pnl', 'profit', 'profitloss', 'netpnl'));
     const feeVal = parseMoney(getVal(row, 'commission', 'fee', 'fees'));
@@ -2918,7 +2932,7 @@ function parseCSVAndImport(csvText) {
     const side = getVal(row, 'side', 'direction');
     let isLong = true;
     if (side) isLong = /short/i.test(side) ? false : true;
-    else if (bFill && sFill) isLong = bFill < sFill;
+    else if (bFillNum && sFillNum) isLong = bFillNum < sFillNum;
 
     // Entry/Exit times + prices
     const bTime = (boughtTs.split(' ')[1] || getVal(row,'entrytime') || '00:00').slice(0,5);
@@ -2935,16 +2949,28 @@ function parseCSVAndImport(csvText) {
       entryPrice = sellP; exitPrice = buyP;
     }
 
+    const symbol = getVal(row, 'symbol', 'ticker', 'asset') || 'UNKNOWN';
+    const dedupKey = buildKey({
+      bFill: bFillRaw || bFillNum || '',
+      sFill: sFillRaw || sFillNum || '',
+      symbol,
+      entryTime,
+      exitTime
+    });
+
+    if (existingFills.has(dedupKey)) { skipped++; continue; }
+    existingFills.add(dedupKey);
+
     const result = pnlVal > 0 ? 'W' : pnlVal < 0 ? 'L' : 'BE';
     const trade = {
       id: Date.now() + i + Math.random()*100|0,
       date: tradeDate,
-      asset: getVal(row, 'symbol', 'ticker', 'asset') || 'UNKNOWN',
+      asset: symbol,
       entryTime, exitTime, entryPrice, exitPrice,
       qty: parseInt(getVal(row, 'qty', 'quantity') || '1'),
       pnl: pnlVal, netPnl: pnlVal - feeVal, fee: feeVal,
       result, direction: isLong ? 'Long' : 'Short', model: 'Other',
-      buyFillId: bFill || null, sellFillId: sFill || null,
+      buyFillId: bFillNum || null, sellFillId: sFillNum || null,
       source: 'csv'
     };
 

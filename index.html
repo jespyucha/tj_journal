@@ -2808,82 +2808,124 @@ function handleCSVImport(e) {
   e.target.value = '';
 }
 
-function parseCSVLine(line) {
+function detectDelimiter(line) {
+  let inQ = false;
+  let commas = 0, semis = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i+1] === '"') { i++; }
+      else { inQ = !inQ; }
+    } else if (!inQ) {
+      if (c === ',') commas++;
+      else if (c === ';') semis++;
+    }
+  }
+  return semis > commas ? ';' : ',';
+}
+
+function normalizeHeader(h) {
+  return (h || '').trim().replace(/^"|"$/g,'').toLowerCase().replace(/\s+/g,'');
+}
+
+function parseCSVLine(line, delimiter) {
   const result = [];
   let cur = '', inQ = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
-    if (c === '"') { inQ = !inQ; }
-    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    if (c === '"') {
+      if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+      else { inQ = !inQ; }
+    }
+    else if (c === delimiter && !inQ) { result.push(cur); cur = ''; }
     else { cur += c; }
   }
   result.push(cur);
   return result;
 }
-
 function parseCSVAndImport(csvText) {
-  const lines = csvText.trim().split('\n');
+  const raw = csvText.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const lines = raw.split('\n').filter(l => l.trim());
   if (lines.length < 2) { showToast('Empty CSV', 'error'); return; }
-  const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^"|"$/g,''));
-  
+
+  const headerLine = lines[0].replace(/^\uFEFF/, '');
+  const delimiter = detectDelimiter(headerLine);
+  const headers = parseCSVLine(headerLine, delimiter).map(h => normalizeHeader(h));
+
   // Collect all existing fillId pairs for dedup
   const existingFills = new Set();
   Object.values(pnlTrades).flat().forEach(t => {
     if (t.buyFillId && t.sellFillId) existingFills.add(t.buyFillId + '_' + t.sellFillId);
   });
-  
+
+  const getVal = (row, ...keys) => {
+    for (const k of keys) {
+      if (row[k] !== undefined && row[k] !== '') return row[k];
+    }
+    return '';
+  };
+
+  const parseMoney = (v) => {
+    const s = (v || '').trim();
+    if (!s) return 0;
+    let n = 0;
+    if (s.startsWith('$(')) n = -parseFloat(s.replace('$(','').replace(')','').replace(/,/g,''));
+    else if (s.startsWith('$')) n = parseFloat(s.replace('$','').replace(/,/g,''));
+    else n = parseFloat(s.replace(/,/g,''));
+    return isNaN(n) ? 0 : n;
+  };
+
   let added = 0, skipped = 0;
   const tradesToSave = [];
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
-    const cols = parseCSVLine(lines[i]).map(c => c.trim().replace(/^"|"$/g,''));
+    const cols = parseCSVLine(lines[i], delimiter).map(c => c.trim().replace(/^"|"$/g,''));
     const row = {};
-    headers.forEach((h, idx) => { row[h] = cols[idx] || ''; });
-    
-    const bFill = parseInt(row.buyFillId || '0');
-    const sFill = parseInt(row.sellFillId || '0');
-    const fillKey = bFill + '_' + sFill;
-    if (existingFills.has(fillKey)) { skipped++; continue; }
-    existingFills.add(fillKey);
-    
-    // Parse PnL: "$(135.00)" → -135 | "$201.00" → 201
-    const pnlStr = (row.pnl || '').trim();
-    let pnlVal = 0;
-    if (pnlStr.startsWith('$(')) {
-      pnlVal = -parseFloat(pnlStr.replace('$(','').replace(')','').replace(/,/g,''));
-    } else if (pnlStr.startsWith('$')) {
-      pnlVal = parseFloat(pnlStr.replace('$','').replace(/,/g,''));
+    headers.forEach((h, idx) => { if (h) row[h] = cols[idx] || ''; });
+
+    const bFill = parseInt(getVal(row, 'buyfillid', 'buyfill', 'buyid') || '0');
+    const sFill = parseInt(getVal(row, 'sellfillid', 'sellfill', 'sellid') || '0');
+
+    // Dedup only when fill ids exist
+    if (bFill && sFill) {
+      const fillKey = bFill + '_' + sFill;
+      if (existingFills.has(fillKey)) { skipped++; continue; }
+      existingFills.add(fillKey);
     }
-    if (isNaN(pnlVal)) { skipped++; continue; }
-    
-    // Determine trade date from soldTimestamp + 22:00 UTC rule
-    const soldTs = (row.soldTimestamp || '').trim();
-    const boughtTs = (row.boughtTimestamp || '').trim();
+
+    const pnlVal = parseMoney(getVal(row, 'pnl', 'profit', 'profitloss', 'netpnl'));
+    const feeVal = parseMoney(getVal(row, 'commission', 'fee', 'fees'));
+
+    const soldTs = getVal(row, 'soldtimestamp', 'selltimestamp', 'exittimestamp', 'soldtime', 'exittime');
+    const boughtTs = getVal(row, 'boughttimestamp', 'buytimestamp', 'entrytimestamp', 'boughttime', 'entrytime');
     if (!soldTs || !boughtTs) { skipped++; continue; }
-    
+
     const soldParts = soldTs.split(' ');
-    const dateParts = soldParts[0].split('/'); // MM/DD/YYYY
+    const dateParts = (soldParts[0] || '').split('/'); // MM/DD/YYYY
+    if (dateParts.length < 3) { skipped++; continue; }
     const soldHour = parseInt((soldParts[1] || '00').split(':')[0]);
     let tradeDate = `${dateParts[2]}-${dateParts[0].padStart(2,'0')}-${dateParts[1].padStart(2,'0')}`;
-    
-    // After 22:00 UTC → next trading day
+
+    // After 22:00 UTC ? next trading day
     if (soldHour >= 22) {
       const d = new Date(tradeDate + 'T23:00:00Z');
       d.setDate(d.getDate() + 1);
       while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
       tradeDate = d.toISOString().slice(0, 10);
     }
-    
-    // Direction based on fill ID order
-    const isLong = bFill < sFill;
-    const direction = isLong ? 'Long' : 'Short';
-    
+
+    // Direction based on fill ID order or side field
+    const side = getVal(row, 'side', 'direction');
+    let isLong = true;
+    if (side) isLong = /short/i.test(side) ? false : true;
+    else if (bFill && sFill) isLong = bFill < sFill;
+
     // Entry/Exit times + prices
-    const bTime = (boughtTs.split(' ')[1] || '00:00').slice(0,5);
-    const sTime = (soldTs.split(' ')[1] || '00:00').slice(0,5);
-    const buyP  = parseFloat(row.buyPrice || '0');
-    const sellP = parseFloat(row.sellPrice || '0');
-    
+    const bTime = (boughtTs.split(' ')[1] || getVal(row,'entrytime') || '00:00').slice(0,5);
+    const sTime = (soldTs.split(' ')[1] || getVal(row,'exittime') || '00:00').slice(0,5);
+    const buyP  = parseFloat(getVal(row,'buyprice','entryprice') || '0');
+    const sellP = parseFloat(getVal(row,'sellprice','exitprice') || '0');
+
     let entryTime, exitTime, entryPrice, exitPrice;
     if (isLong) {
       entryTime = bTime; exitTime = sTime;
@@ -2892,35 +2934,30 @@ function parseCSVAndImport(csvText) {
       entryTime = sTime; exitTime = bTime;
       entryPrice = sellP; exitPrice = buyP;
     }
-    
+
     const result = pnlVal > 0 ? 'W' : pnlVal < 0 ? 'L' : 'BE';
     const trade = {
       id: Date.now() + i + Math.random()*100|0,
       date: tradeDate,
-      asset: row.symbol || 'UNKNOWN',
+      asset: getVal(row, 'symbol', 'ticker', 'asset') || 'UNKNOWN',
       entryTime, exitTime, entryPrice, exitPrice,
-      qty: parseInt(row.qty || '1'),
-      pnl: pnlVal, netPnl: pnlVal, fee: 0,
-      result, direction, model: 'Other',
-      buyFillId: bFill, sellFillId: sFill,
+      qty: parseInt(getVal(row, 'qty', 'quantity') || '1'),
+      pnl: pnlVal, netPnl: pnlVal - feeVal, fee: feeVal,
+      result, direction: isLong ? 'Long' : 'Short', model: 'Other',
+      buyFillId: bFill || null, sellFillId: sFill || null,
       source: 'csv'
     };
-    
+
     if (!pnlTrades[tradeDate]) pnlTrades[tradeDate] = [];
     pnlTrades[tradeDate].push(trade);
     tradesToSave.push(trade);
     added++;
   }
-  
-  if (added > 0) { saveLocalTrades(); saveBackup('csv_import'); rCal(); renderCalStats(); rStats(); updateHeaderSub(); saveTradesToCloud(tradesToSave); }
-  const msg = added > 0 ? `✅ Imported ${added} trade${added>1?'s':''}` + (skipped>0 ? ` (${skipped} skipped as duplicates)` : '') : `⚠️ No new trades — ${skipped} duplicate${skipped>1?'s':''} skipped`;
-  showToast(msg);
-}
 
-// ═══════════════════════════════════════════════════════════════
-// JOURNAL ENTRY — DELETE & EDIT
-// ═══════════════════════════════════════════════════════════════
-function deleteJournalEntry(id, date) {
+  if (added > 0) { saveLocalTrades(); saveBackup('csv_import'); rCal(); renderCalStats(); rStats(); updateHeaderSub(); saveTradesToCloud(tradesToSave); }
+  const msg = added > 0 ? `? Imported ${added} trade${added>1?'s':''}` + (skipped>0 ? ` (${skipped} skipped as duplicates)` : '') : `?? No new trades - ${skipped} duplicate${skipped>1?'s':''} skipped`;
+  showToast(msg);
+}function deleteJournalEntry(id, date) {
   if (!confirm('Delete this journal entry?')) return;
   jfTrades = jfTrades.filter(j => j.id !== id);
   saveLocalJournal();

@@ -1402,8 +1402,15 @@ async function saveJournalToCloud(entry) {
       body: JSON.stringify(entry)
     });
     if (!response.ok) {
-      setCloudStatus('err','Cloud: Offline');
-      showToast('Saved locally, cloud failed','error');
+      if (response.status === 413) {
+        showToast('Screenshot too large - try a smaller image', 'error');
+      } else if (response.status === 501) {
+        showToast('Cloud screenshots not configured', 'error');
+      } else {
+        showToast(`Saved locally, cloud failed (${response.status})`,'error');
+      }
+      if (response.status >= 500 && response.status !== 501) setCloudStatus('err','Cloud: Offline');
+      else setCloudStatus('ok','Cloud: Online');
     } else {
       setCloudStatus('ok','Cloud: Online');
     }
@@ -1841,6 +1848,7 @@ async function addTrade() {
   }
 
   try {
+    setCloudStatus('sync','Cloud: Syncing...');
     const response = await authFetch('/api/trades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1848,11 +1856,15 @@ async function addTrade() {
     });
 
     if (response.ok) {
+      setCloudStatus('ok','Cloud: Online');
       showToast('Saved locally and to cloud','success');
     } else {
-      showToast('Saved locally, cloud failed','error');
+      if (response.status >= 500) setCloudStatus('err','Cloud: Offline');
+      else setCloudStatus('ok','Cloud: Online');
+      showToast(`Saved locally, cloud failed (${response.status})`,'error');
     }
   } catch (err) {
+    setCloudStatus('err','Cloud: Offline');
     console.error('Network error:', err);
     showToast('Saved locally, cloud failed','error');
   }
@@ -2125,7 +2137,17 @@ async function uploadScreenshot(ss) {
       body: JSON.stringify({ dataUrl: ss.dataUrl, filename: ss.filename })
     });
     if (!res.ok) {
-      setCloudStatus('err','Cloud: Offline');
+      if (res.status === 501) {
+        showToast('Cloud screenshots not configured', 'error');
+        setCloudStatus('ok','Cloud: Online');
+        return { url: ss.dataUrl, id: null };
+      }
+      if (res.status >= 500) {
+        setCloudStatus('err','Cloud: Offline');
+      } else {
+        setCloudStatus('ok','Cloud: Online');
+      }
+      showToast('Screenshot upload failed, saved locally', 'error');
       return { url: ss.dataUrl, id: null };
     }
     const data = await res.json();
@@ -2134,6 +2156,7 @@ async function uploadScreenshot(ss) {
   } catch (err) {
     setCloudStatus('err','Cloud: Offline');
     console.error('Screenshot upload failed:', err);
+    showToast('Screenshot upload failed, saved locally', 'error');
     return { url: ss.dataUrl, id: null };
   }
 }

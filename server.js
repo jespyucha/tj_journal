@@ -265,8 +265,11 @@ app.post('/api/screenshots', auth, async (req, res) => {
     });
     res.json({ url: result.secure_url, publicId: result.public_id });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Error uploading screenshot');
+    console.error('Cloudinary upload failed:', err);
+    res.status(500).json({
+      message: 'Error uploading screenshot',
+      error: err && err.message ? err.message : String(err)
+    });
   }
 });
 app.post('/api/migrate/claim', auth, async (req, res) => {

@@ -2136,23 +2136,29 @@ async function uploadScreenshot(ss) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataUrl: ss.dataUrl, filename: ss.filename })
     });
+
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+
     if (!res.ok) {
       if (res.status === 501) {
         showToast('Cloud screenshots not configured', 'error');
         setCloudStatus('ok','Cloud: Online');
         return { url: ss.dataUrl, id: null };
       }
-      if (res.status >= 500) {
-        setCloudStatus('err','Cloud: Offline');
+      if (res.status === 413) {
+        showToast('Screenshot too large - try a smaller image', 'error');
       } else {
-        setCloudStatus('ok','Cloud: Online');
+        const msg = (data && data.message) ? data.message : `Screenshot upload failed (${res.status})`;
+        showToast(msg + ' (saved locally)', 'error');
       }
-      showToast('Screenshot upload failed, saved locally', 'error');
+      if (res.status >= 500) setCloudStatus('err','Cloud: Offline');
+      else setCloudStatus('ok','Cloud: Online');
       return { url: ss.dataUrl, id: null };
     }
-    const data = await res.json();
+
     setCloudStatus('ok','Cloud: Online');
-    return { url: data.url || ss.dataUrl, id: data.publicId || null };
+    return { url: (data && data.url) ? data.url : ss.dataUrl, id: (data && data.publicId) ? data.publicId : null };
   } catch (err) {
     setCloudStatus('err','Cloud: Offline');
     console.error('Screenshot upload failed:', err);

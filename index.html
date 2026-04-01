@@ -400,12 +400,12 @@ textarea.jf-input{resize:vertical;min-height:64px;line-height:1.4}
           <input type="text" class="fi" id="cal-asset" placeholder="MGCJ6">
         </div>
         <div class="fg">
-          <label class="flbl">Entry Time</label>
-          <input type="time" class="fi" id="cal-entry-time">
+          <label class="flbl">Entry Time (HH:MM:SS)</label>
+          <input type="time" step="1" class="fi" id="cal-entry-time">
         </div>
         <div class="fg">
-          <label class="flbl">Exit Time</label>
-          <input type="time" class="fi" id="cal-exit-time">
+          <label class="flbl">Exit Time (HH:MM:SS)</label>
+          <input type="time" step="1" class="fi" id="cal-exit-time">
         </div>
         <div class="fg">
           <label class="flbl">Entry Price</label>
@@ -765,8 +765,8 @@ textarea.jf-input{resize:vertical;min-height:64px;line-height:1.4}
     <div class="form-grid-4">
       <div class="fg"><label class="flbl">Date</label><input type="date" class="fi" id="edit-date"></div>
       <div class="fg"><label class="flbl">Asset</label><input type="text" class="fi" id="edit-asset"></div>
-      <div class="fg"><label class="flbl">Entry Time</label><input type="time" class="fi" id="edit-entry-time"></div>
-      <div class="fg"><label class="flbl">Exit Time</label><input type="time" class="fi" id="edit-exit-time"></div>
+      <div class="fg"><label class="flbl">Entry Time (HH:MM:SS)</label><input type="time" step="1" class="fi" id="edit-entry-time"></div>
+      <div class="fg"><label class="flbl">Exit Time (HH:MM:SS)</label><input type="time" step="1" class="fi" id="edit-exit-time"></div>
       <div class="fg"><label class="flbl">Entry Price</label><input type="number" class="fi" id="edit-entry-price" step="0.00001"></div>
       <div class="fg"><label class="flbl">Exit Price</label><input type="number" class="fi" id="edit-exit-price" step="0.00001"></div>
       <div class="fg"><label class="flbl">Net P&amp;L ($)</label><input type="number" class="fi" id="edit-pnl" step="0.01"></div>
@@ -883,6 +883,17 @@ textarea.jf-input{resize:vertical;min-height:64px;line-height:1.4}
         </div>
       </div>
     </div>
+        <div class="jf-card-title" style="margin-top:6px">Screenshot (optional)</div>
+    <div class="ss-drop" id="je-ss-drop" ondragover="jeSsDragOver(event)" ondragleave="jeSsDragLeave(event)" ondrop="jeSsDrop(event)">
+      <input type="file" id="je-ss-input" accept="image/*" onchange="jeSsFileChosen(event)">
+      <div class="drop-icon">IMG</div>
+      <div class="drop-lbl"><strong>Click to upload</strong> or drag &amp; drop<br>PNG, JPG, WEBP - chart screenshots</div>
+    </div>
+    <div class="ss-preview" id="je-ss-preview">
+      <button class="ss-remove" onclick="jeSsRemove()">&times;</button>
+      <img id="je-ss-img" src="" alt="Journal screenshot">
+      <div class="ss-fname" id="je-ss-fname"></div>
+    </div>
     <div class="form-actions">
       <button class="btn btn-green" onclick="saveJournalEdit()" style="flex:2">💾 Save Journal</button>
       <button class="btn" onclick="closeJournalEditModal()">Cancel</button>
@@ -906,6 +917,8 @@ let jfTrades = [];
 let currentUser = null;
 let authMode = 'login';
 let currentSS = null;
+let jeCurrentSS = null;
+let jeRemoveRequested = false;
 
 let jfSel = {};
 let jfMultiSel = {};
@@ -1794,6 +1807,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if(jem) jem.addEventListener('click', function(e){ if(e.target===this) closeJournalEditModal(); });
   const ssDropEl = document.getElementById('ss-drop');
   if (ssDropEl) ssDropEl.addEventListener('click', () => document.getElementById('ss-input').click());
+  const jeDropEl = document.getElementById('je-ss-drop');
+  if (jeDropEl) jeDropEl.addEventListener('click', () => document.getElementById('je-ss-input').click());
 });
 
 // [calendar stats & day-detail handled above]
@@ -2209,6 +2224,57 @@ function ssRemove() {
   document.getElementById('ss-input').value = '';
 }
 
+function jeSsDragOver(e) {
+  e.preventDefault();
+  const el = document.getElementById('je-ss-drop');
+  if (el) el.classList.add('drag-over');
+}
+
+function jeSsDragLeave() {
+  const el = document.getElementById('je-ss-drop');
+  if (el) el.classList.remove('drag-over');
+}
+
+function jeSsDrop(e) {
+  e.preventDefault();
+  const el = document.getElementById('je-ss-drop');
+  if (el) el.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) jeSsLoadFile(file);
+}
+
+function jeSsFileChosen(e) {
+  const file = e.target.files[0];
+  if (file) jeSsLoadFile(file);
+}
+
+function jeSsLoadFile(file) {
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    jeCurrentSS = { dataUrl: ev.target.result, filename: file.name };
+    jeRemoveRequested = false;
+    const img = document.getElementById('je-ss-img');
+    const prev = document.getElementById('je-ss-preview');
+    const fname = document.getElementById('je-ss-fname');
+    if (img) img.src = ev.target.result;
+    if (prev) prev.style.display = 'block';
+    if (fname) fname.textContent = 'File: ' + file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+function jeSsRemove() {
+  jeCurrentSS = null;
+  jeRemoveRequested = true;
+  const img = document.getElementById('je-ss-img');
+  const prev = document.getElementById('je-ss-preview');
+  const fname = document.getElementById('je-ss-fname');
+  const input = document.getElementById('je-ss-input');
+  if (img) img.src = '';
+  if (prev) prev.style.display = 'none';
+  if (fname) fname.textContent = '';
+  if (input) input.value = '';
+}
 function openSSModal(tradeId) {
   const trade = jfTrades.find(t => t.id == tradeId);
   if (!trade || !trade.screenshot) return;
@@ -2956,8 +3022,8 @@ function parseCSVAndImport(csvText) {
     else if (bFillNum && sFillNum) isLong = bFillNum < sFillNum;
 
     // Entry/Exit times + prices
-    const bTime = (boughtTs.split(' ')[1] || getVal(row,'entrytime') || '00:00').slice(0,5);
-    const sTime = (soldTs.split(' ')[1] || getVal(row,'exittime') || '00:00').slice(0,5);
+    const bTime = (boughtTs.split(' ')[1] || getVal(row,'entrytime') || '00:00:00').slice(0,8);
+    const sTime = (soldTs.split(' ')[1] || getVal(row,'exittime') || '00:00:00').slice(0,8);
     const buyP  = parseFloat(getVal(row,'buyprice','entryprice') || '0');
     const sellP = parseFloat(getVal(row,'sellprice','exitprice') || '0');
 
@@ -3033,14 +3099,48 @@ function openJournalEditModal(id) {
       s.classList.toggle('active', parseInt(s.dataset.val) <= (val||0));
     });
   });
+
+  // Screenshot state
+  jeCurrentSS = null;
+  jeRemoveRequested = false;
+  const prev = document.getElementById('je-ss-preview');
+  const img = document.getElementById('je-ss-img');
+  const fname = document.getElementById('je-ss-fname');
+  const input = document.getElementById('je-ss-input');
+  if (input) input.value = '';
+  if (j.screenshot) {
+    if (img) img.src = j.screenshot;
+    if (prev) prev.style.display = 'block';
+    if (fname) fname.textContent = j.screenshotName ? ('File: ' + j.screenshotName) : 'Existing screenshot';
+  } else {
+    if (img) img.src = '';
+    if (prev) prev.style.display = 'none';
+    if (fname) fname.textContent = '';
+  }
+
   document.getElementById('journal-edit-modal').classList.add('open');
 }
-
-function saveJournalEdit() {
+async function saveJournalEdit() {
   const id = parseInt(document.getElementById('je-id').value);
   const idx = jfTrades.findIndex(j => j.id === id);
   if (idx < 0) return;
   const conf = document.getElementById('je-confluences').value.split(',').map(s=>s.trim()).filter(Boolean);
+
+  let screenshotUrl = jfTrades[idx].screenshot || null;
+  let screenshotId = jfTrades[idx].screenshotId || null;
+  let screenshotName = jfTrades[idx].screenshotName || null;
+
+  if (jeRemoveRequested) {
+    screenshotUrl = null;
+    screenshotId = null;
+    screenshotName = null;
+  } else if (jeCurrentSS) {
+    const uploaded = await uploadScreenshot(jeCurrentSS);
+    screenshotUrl = uploaded ? uploaded.url : jeCurrentSS.dataUrl;
+    screenshotId = uploaded ? uploaded.id : null;
+    screenshotName = jeCurrentSS.filename || null;
+  }
+
   jfTrades[idx] = {
     ...jfTrades[idx],
     reason: document.getElementById('je-reason').value,
@@ -3053,6 +3153,9 @@ function saveJournalEdit() {
     ratingSetup: parseInt(document.querySelector('[data-jerate="setup"] .je-star.active:last-child')?.dataset.val||'0'),
     ratingExec: parseInt(document.querySelector('[data-jerate="execution"] .je-star.active:last-child')?.dataset.val||'0'),
     ratingConf: parseInt(document.querySelector('[data-jerate="confidence"] .je-star.active:last-child')?.dataset.val||'0'),
+    screenshot: screenshotUrl,
+    screenshotId: screenshotId,
+    screenshotName: screenshotName,
   };
   saveLocalJournal();
   saveBackup('journal_edit');
@@ -3060,9 +3163,8 @@ function saveJournalEdit() {
   document.getElementById('journal-edit-modal').classList.remove('open');
   rCal();
   if (selectedDate) renderDayDetail(selectedDate);
-  showToast('✅ Journal updated!');
+  showToast('Journal updated!');
 }
-
 function jeRating(group, val) {
   document.querySelectorAll(`[data-jerate="${group}"] .je-star`).forEach(s => {
     s.classList.toggle('active', parseInt(s.dataset.val) <= val);
